@@ -902,7 +902,12 @@ function adminUsers() {
 }
 
 function usersHtml() {
-  if (adminData.error) return `<p class="hint err">Kullanıcı listesi okunamadı (${esc(adminData.error)}). Firebase'deki veritabanı kurallarını güncellediğinden emin ol.</p>`;
+  if (adminData.error) return `<div class="admin-err">
+    <p class="hint err">Kullanıcı listesi okunamadı: veritabanı izin vermedi.</p>
+    <p class="hint">Firebase → Realtime Database → Rules sekmesinde yeni kuralların (içinde <b>profiles</b> ve <b>inbox</b> geçen) yayınlandığından emin ol, sonra tekrar dene.</p>
+    <p class="hint">Giriş yapılan hesap: <b>${esc(Store.user?.email || '-')}</b></p>
+    <button class="btn btn-soft btn-sm" data-act="admin-retry">${ic('reset')} Tekrar dene</button>
+  </div>`;
   if (!adminData.loaded) return '<p class="hint">Yükleniyor…</p>';
   const rows = adminUsers();
   if (!rows.length) return empty('Henüz kullanıcı yok', 'Google ile giriş yapıp siteyi açan herkes burada görünür.');
@@ -1242,6 +1247,13 @@ const ACTIONS = {
   },
   close: () => closeModal(),
   'msg-to': el => openMsgForm(el.dataset.uid),
+  // İzin hatası alan dinleyiciler kendiliğinden yeniden denemez; aboneliği baştan kur.
+  'admin-retry': () => {
+    adminOff?.();
+    adminData = { profiles: {}, inbox: {}, error: null, loaded: false };
+    refreshAdmin();
+    adminOff = Store.watchAdmin(data => { adminData = data; refreshAdmin(); });
+  },
   'msg-ok': el => {
     shown.add(el.dataset.id);
     Store.markRead(el.dataset.id);

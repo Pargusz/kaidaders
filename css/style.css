@@ -513,6 +513,7 @@ button.tdate:hover { color: var(--accent-text); background: var(--accent-soft); 
 .ustat em { font-style: normal; font-weight: 700; color: var(--good); }
 .you { font-size: 11px; font-weight: 700; color: var(--accent-text); background: var(--accent-soft); padding: 1px 7px; border-radius: 99px; vertical-align: middle; }
 .err { color: var(--bad); }
+.admin-err { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 @media (max-width: 480px) { .urow .lbl { display: none; } .urow .btn { width: 38px; padding: 0; } }
 .sent-list { display: flex; flex-direction: column; gap: 8px; }
 .sent { background: var(--bg); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
