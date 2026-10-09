@@ -90,7 +90,7 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .nav a.active { color: var(--accent-text); }
 .nav a.active .ic { background: var(--accent-soft); border-radius: 10px; padding: 3px 10px; width: 44px; height: 28px; }
 .nav .ic { width: 44px; height: 28px; padding: 3px 10px; }
-.nav-settings { display: none !important; }
+.nav-settings, .nav-admin { display: none !important; }
 
 @media (min-width: 960px) {
   body { display: grid; grid-template-columns: 240px 1fr; }
@@ -101,7 +101,8 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
   .nav .ic, .nav a.active .ic { width: 20px; height: 20px; padding: 0; background: none; }
   .nav a:hover { background: var(--bg); color: var(--text); }
   .nav a.active { background: var(--accent-soft); }
-  .nav-settings { display: flex !important; }
+  .nav-settings, body.is-admin .nav-admin { display: flex !important; }
+  .nav-admin { margin-left: 18px; font-size: 13.5px !important; }
   .brand-mobile, .topbar .top-settings { display: none; }
   .topbar { justify-content: flex-end; padding: 16px 28px 8px; }
   .view { padding: 8px 28px 48px; gap: 20px; }
@@ -136,6 +137,11 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .seg { display: inline-flex; padding: 3px; border-radius: 12px; background: var(--bg); gap: 2px; }
 .seg button { padding: 5px 10px; border-radius: 9px; font-size: 12.5px; font-weight: 700; color: var(--muted); }
 .seg button.on { background: var(--card); color: var(--text); box-shadow: var(--shadow); }
+.seg a { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 9px; font-size: 13.5px; font-weight: 700; color: var(--muted); }
+.seg a.on { background: var(--card); color: var(--text); box-shadow: var(--shadow); }
+.seg a .ic { width: 16px; height: 16px; }
+.admin-tabs { align-self: flex-start; background: var(--card); box-shadow: var(--shadow); }
+.admin-tabs a.on { background: var(--accent-soft); color: var(--accent-text); box-shadow: none; }
 .seg-lg button { padding: 8px 14px; font-size: 13.5px; }
 
 .field { display: flex; flex-direction: column; gap: 6px; border: 0; padding: 0; margin: 0; min-width: 0; }
@@ -491,3 +497,33 @@ button.tdate:hover { color: var(--accent-text); background: var(--accent-soft); 
 @keyframes fall { to { transform: translate(var(--x), 105vh) rotate(var(--r)); } }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* ============================================================ yönetici / mesajlar */
+.ulist { display: flex; flex-direction: column; gap: 4px; }
+.urow { display: flex; align-items: center; gap: 12px; padding: 10px 6px; border-radius: 12px; }
+.urow:hover { background: var(--bg); }
+.uav { position: relative; width: 42px; height: 42px; border-radius: 50%; flex: none; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); font-weight: 800; }
+.uav img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.udot { position: absolute; right: -1px; bottom: -1px; width: 13px; height: 13px; border-radius: 50%; background: var(--muted); border: 2.5px solid var(--card); }
+.udot.on { background: var(--good); }
+.umain { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.35; }
+.umain b { font-size: 14.5px; }
+.umain .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ustat { font-size: 12px; color: var(--muted); }
+.ustat em { font-style: normal; font-weight: 700; color: var(--good); }
+.you { font-size: 11px; font-weight: 700; color: var(--accent-text); background: var(--accent-soft); padding: 1px 7px; border-radius: 99px; vertical-align: middle; }
+.err { color: var(--bad); }
+@media (max-width: 480px) { .urow .lbl { display: none; } .urow .btn { width: 38px; padding: 0; } }
+.sent-list { display: flex; flex-direction: column; gap: 8px; }
+.sent { background: var(--bg); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.sent p { font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sent .hint { font-size: 12px; }
+
+.msg-wrap { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: rgba(14, 13, 24, .5); backdrop-filter: blur(4px); animation: fade .2s; }
+.msg-pop { width: 100%; max-width: 400px; background: var(--card); border-radius: 24px; padding: 26px 22px 20px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; box-shadow: 0 20px 60px rgba(0,0,0,.3); animation: pop-in .35s cubic-bezier(.2, 1.4, .4, 1); }
+.msg-ic { width: 56px; height: 56px; border-radius: 18px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--accent), #a35cff); box-shadow: 0 8px 22px rgba(109, 94, 252, .35); margin-bottom: 4px; animation: ring-bell 1s ease .3s; }
+.msg-ic .ic { width: 28px; height: 28px; }
+.msg-pop h2 { font-size: 20px; font-weight: 800; }
+.msg-text { font-size: 15px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 50vh; overflow-y: auto; margin-bottom: 8px; }
+@keyframes pop-in { from { transform: scale(.85); opacity: 0; } }
+@keyframes ring-bell { 0%, 100% { transform: rotate(0); } 20%, 60% { transform: rotate(-12deg); } 40%, 80% { transform: rotate(12deg); } }

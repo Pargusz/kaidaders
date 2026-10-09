@@ -55,6 +55,9 @@ const I = {
   down: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
   up: '<path d="M12 15V3M7 8l5-5 5 5M5 21h14"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>',
 };
 const ic = (n, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[n]}</svg>`;
 
@@ -790,6 +793,7 @@ VIEWS.ayarlar = () => {
   const pool = SUBJECTS.filter(sub => sub.exam === 'TYT' || ALANLAR[s.alan].ayt.includes(sub.id));
   const statusTxt = { local: 'Giriş yapılmadı', syncing: 'Senkronize ediliyor…', synced: 'Bulutla senkron', error: 'Senkron hatası' }[Store.status];
   return `
+  ${adminTabs()}
   <section class="card sync-card">
     <div class="card-head"><h2>${ic('cloud')} Bulut senkronizasyonu</h2><span class="sync-pill s-${Store.status}">${statusTxt}</span></div>
     ${u ? `<div class="account">
@@ -804,6 +808,13 @@ VIEWS.ayarlar = () => {
         Google ile giriş yap
       </button>`}
   </section>
+
+  ${inbox.length ? `<section class="card">
+    <div class="card-head"><h2>${ic('bell')} Gelen mesajlar</h2></div>
+    <div class="sent-list">${inbox.slice().reverse().slice(0, 10).map(m => `<div class="sent">
+      <div><b>${esc(m.title || 'Mesaj')}</b><p>${esc(m.text)}</p></div><span class="hint">${esc(m.from || 'Yönetici')} · ${ago(m.at)}</span>
+    </div>`).join('')}</div>
+  </section>` : ''}
 
   <form class="card form ${isAuto() ? '' : 'is-custom'}" data-form="settings">
     <div class="card-head"><h2>Plan ayarları</h2></div>
@@ -859,6 +870,163 @@ function openModal(html, opts = {}) {
 function closeModal() {
   document.querySelector('.modal-wrap')?.remove();
   document.body.classList.remove('no-scroll');
+}
+
+// ---------------------------------------------------------------- yönetici: kullanıcılar
+let adminData = { profiles: {}, inbox: {}, error: null, loaded: false };
+let adminOff = null;
+
+function ago(ts) {
+  if (!ts) return 'bilinmiyor';
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  if (s < 60) return 'az önce';
+  if (s < 3600) return `${Math.floor(s / 60)} dk önce`;
+  if (s < 86400) return `${Math.floor(s / 3600)} sa önce`;
+  return `${Math.floor(s / 86400)} gün önce`;
+}
+
+function adminTabs() {
+  if (!Store.isAdmin) return '';
+  return `<nav class="seg seg-lg admin-tabs" aria-label="Ayarlar sekmeleri">
+    <a href="#ayarlar" class="${ui.view === 'ayarlar' ? 'on' : ''}">${ic('gear')} Ayarlar</a>
+    <a href="#kullanicilar" class="${ui.view === 'kullanicilar' ? 'on' : ''}">${ic('users')} Kullanıcılar</a>
+  </nav>`;
+}
+
+const userName = (uid) => { const p = adminData.profiles[uid] || {}; return p.appName || p.name || p.email || 'İsimsiz'; };
+
+function adminUsers() {
+  return Object.entries(adminData.profiles)
+    .map(([uid, p]) => ({ uid, ...p, online: !!p.connections }))
+    .sort((a, b) => (b.online - a.online) || (b.lastSeen || 0) - (a.lastSeen || 0));
+}
+
+function usersHtml() {
+  if (adminData.error) return `<p class="hint err">Kullanıcı listesi okunamadı (${esc(adminData.error)}). Firebase'deki veritabanı kurallarını güncellediğinden emin ol.</p>`;
+  if (!adminData.loaded) return '<p class="hint">Yükleniyor…</p>';
+  const rows = adminUsers();
+  if (!rows.length) return empty('Henüz kullanıcı yok', 'Google ile giriş yapıp siteyi açan herkes burada görünür.');
+  return rows.map(u => {
+    const msgs = Object.values(adminData.inbox[u.uid] || {}).sort((a, b) => (a.at || 0) - (b.at || 0));
+    const last = msgs.at(-1);
+    const me = u.uid === Store.user?.uid;
+    return `<div class="urow">
+      <span class="uav">${u.photo ? `<img src="${esc(u.photo)}" alt="" referrerpolicy="no-referrer">` : esc((u.name || u.email || '?')[0].toUpperCase())}<i class="udot ${u.online ? 'on' : ''}"></i></span>
+      <div class="umain">
+        <b>${esc(userName(u.uid))}${me ? ' <span class="you">sen</span>' : ''}</b>
+        <span class="hint">${esc(u.email || '')}</span>
+        <span class="ustat">${u.online ? '<em class="on">Çevrimiçi</em>' : `Son görülme: ${ago(u.lastSeen)}`}${last ? ` · Son mesaj ${last.readAt ? 'okundu ✓' : 'okunmadı'}` : ''}</span>
+      </div>
+      ${me ? '' : `<button class="btn btn-soft btn-sm" data-act="msg-to" data-uid="${u.uid}" aria-label="Mesaj gönder">${ic('send')}<span class="lbl">Mesaj</span></button>`}
+    </div>`;
+  }).join('');
+}
+
+// Aynı kimlikle birden çok kişiye giden mesajlar tek satırda toplanır.
+function sentHtml() {
+  const g = {};
+  for (const [uid, box] of Object.entries(adminData.inbox)) {
+    for (const [k, m] of Object.entries(box || {})) {
+      const x = (g[k] ||= { ...m, total: 0, read: 0, to: [] });
+      x.total++; if (m.readAt) x.read++; x.to.push(uid);
+    }
+  }
+  const list = Object.values(g).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 10);
+  if (!list.length) return '<p class="hint">Henüz mesaj göndermedin.</p>';
+  return list.map(m => `<div class="sent">
+    <div><b>${esc(m.title || 'Mesaj')}</b><p>${esc(m.text)}</p></div>
+    <span class="hint">${ago(m.at)} · ${m.total === 1 ? esc(userName(m.to[0])) : `${m.total} kişi`} · ${m.total === 1 ? (m.read ? 'okundu ✓' : 'okunmadı') : `${m.read}/${m.total} okudu`}</span>
+  </div>`).join('');
+}
+
+function userCount() {
+  const all = adminUsers();
+  return `${all.filter(u => u.online).length} çevrimiçi · ${all.length} kişi`;
+}
+
+VIEWS.kullanicilar = () => {
+  if (!Store.isAdmin) return empty('Bu sayfa sadece yöneticiye açık', 'Yönetici hesabıyla Google girişi yapmalısın.');
+  return `${adminTabs()}
+  <section class="card">
+    <div class="card-head"><h2>${ic('bell')} Herkese mesaj gönder</h2></div>
+    <form class="form" data-form="msg-all">
+      <input name="title" placeholder="Başlık (isteğe bağlı)" maxlength="60" autocomplete="off">
+      <textarea name="text" placeholder="Mesajın… Gönderdiğin anda siteyi açık tutan herkesin ekranında belirir, kapalı olanlar açınca görür." maxlength="1000" rows="3" required></textarea>
+      <button class="btn btn-primary">${ic('send')} Herkese gönder</button>
+    </form>
+  </section>
+  <div class="grid-2">
+    <section class="card">
+      <div class="card-head"><h2>${ic('users')} Kullanıcılar</h2><span class="count" id="ucount">${userCount()}</span></div>
+      <div id="users-box" class="ulist">${usersHtml()}</div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Gönderilen mesajlar</h2></div>
+      <div id="sent-box" class="sent-list">${sentHtml()}</div>
+    </section>
+  </div>`;
+};
+
+// Canlı güncellemede formlar silinmesin diye sadece listeler yenilenir.
+function refreshAdmin() {
+  if (ui.view !== 'kullanicilar') return;
+  const u = $('#users-box'), sb = $('#sent-box'), c = $('#ucount');
+  if (u) u.innerHTML = usersHtml();
+  if (sb) sb.innerHTML = sentHtml();
+  if (c) c.textContent = userCount();
+}
+
+function openMsgForm(uid) {
+  openModal(`
+    <form class="form" data-form="msg-one" data-uid="${uid}">
+      <div class="modal-head"><h2>${esc(userName(uid))} kişisine mesaj</h2><button type="button" class="icon-btn" data-act="close" aria-label="Kapat">${ic('x')}</button></div>
+      <input name="title" placeholder="Başlık (isteğe bağlı)" maxlength="60" autocomplete="off">
+      <textarea name="text" placeholder="Mesajın…" maxlength="1000" rows="4" required></textarea>
+      <button class="btn btn-primary btn-block">${ic('send')} Gönder</button>
+    </form>`);
+  $('[data-form="msg-one"] textarea')?.focus();
+}
+
+// ---------------------------------------------------------------- gelen mesaj popup'ı
+let inbox = [];
+const shown = new Set();
+
+function showNextMessage() {
+  const m = inbox.find(x => !x.readAt && !shown.has(x.id));
+  let pop = $('#msg-pop');
+  if (!m) { pop?.remove(); return; }
+  if (pop?.dataset.id === m.id) return;
+  pop?.remove();
+  const at = m.at ? new Date(m.at) : new Date();
+  pop = document.createElement('div');
+  pop.id = 'msg-pop';
+  pop.className = 'msg-wrap';
+  pop.dataset.id = m.id;
+  pop.innerHTML = `<div class="msg-pop" role="alertdialog" aria-modal="true" aria-labelledby="msg-title">
+    <span class="msg-ic">${ic('bell')}</span>
+    <p class="eyebrow">${esc(m.from || 'Yönetici')} · ${pad(at.getHours())}:${pad(at.getMinutes())}</p>
+    <h2 id="msg-title">${esc(m.title || 'Yeni mesaj')}</h2>
+    <p class="msg-text">${esc(m.text)}</p>
+    <button class="btn btn-primary btn-block" data-act="msg-ok" data-id="${m.id}">Tamam</button>
+  </div>`;
+  document.body.append(pop);
+  pop.querySelector('button').focus();
+  chime();
+  try { navigator.vibrate?.([120, 60, 120]); } catch {}
+  notify(`${m.title ? m.title + ': ' : ''}${m.text}`);
+}
+
+function chime() {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    [[660, 0], [990, 0.12]].forEach(([f, t]) => {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.value = f; o.type = 'sine'; o.connect(g); g.connect(ac.destination);
+      g.gain.setValueAtTime(0.15, ac.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + t + 0.35);
+      o.start(ac.currentTime + t); o.stop(ac.currentTime + t + 0.35);
+    });
+  } catch {}
 }
 
 function toast(msg) {
@@ -1073,6 +1241,12 @@ const ACTIONS = {
     commit();
   },
   close: () => closeModal(),
+  'msg-to': el => openMsgForm(el.dataset.uid),
+  'msg-ok': el => {
+    shown.add(el.dataset.id);
+    Store.markRead(el.dataset.id);
+    showNextMessage();
+  },
   theme: () => {
     const order = ['auto', 'light', 'dark'];
     state.settings.theme = order[(order.indexOf(state.settings.theme) + 1) % 3];
@@ -1116,7 +1290,25 @@ document.addEventListener('submit', e => {
   FORMS[f.dataset.form]?.(fd, f);
 });
 
+async function sendMsg(uids, fd, f, done) {
+  const text = String(fd.get('text') || '').trim(), title = String(fd.get('title') || '').trim();
+  if (!text) return;
+  if (!uids.length) { toast('Henüz mesaj gönderilecek başka kullanıcı yok'); return; }
+  const btn = f.querySelector('button.btn-primary');
+  btn.disabled = true;
+  try {
+    await Store.sendMessage(uids, { title, text });
+    f.reset();
+    done?.();
+    toast(uids.length === 1 ? 'Mesaj gönderildi' : `${uids.length} kişiye gönderildi`);
+  } catch (e) {
+    toast('Gönderilemedi: ' + (e.code || e.message));
+  } finally { btn.disabled = false; }
+}
+
 const FORMS = {
+  'msg-all': (fd, f) => sendMsg(adminUsers().filter(u => u.uid !== Store.user?.uid).map(u => u.uid), fd, f),
+  'msg-one': (fd, f) => sendMsg([f.dataset.uid], fd, f, closeModal),
   custom: (fd, f) => {
     const d = f.dataset.date;
     const text = String(fd.get('text') || '').trim(), sub = SUB[fd.get('sub')] ? fd.get('sub') : '';
@@ -1239,7 +1431,7 @@ document.addEventListener('toggle', e => {
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('.modal-wrap')?.dataset.locked) closeModal(); });
 
 // ---------------------------------------------------------------- render
-const NAV = ['bugun', 'takvim', 'konular', 'deneme', 'istatistik', 'ayarlar'];
+const NAV = ['bugun', 'takvim', 'konular', 'deneme', 'istatistik', 'ayarlar', 'kullanicilar'];
 
 function applyTheme() {
   const t = state.settings.theme;
@@ -1261,6 +1453,7 @@ function renderTop() {
 function render() {
   if (!NAV.includes(ui.view)) ui.view = 'bugun';
   buildCtx();
+  document.body.classList.toggle('is-admin', Store.isAdmin);
   document.querySelectorAll('[data-nav]').forEach(a => {
     const on = a.dataset.nav === ui.view;
     a.classList.toggle('active', on);
@@ -1294,7 +1487,17 @@ setInterval(() => { if (today() !== lastDay) { lastDay = today(); render(); } },
 document.addEventListener('visibilitychange', () => { if (!document.hidden && today() !== lastDay) { lastDay = today(); render(); } });
 
 Store.on('status', () => { renderTop(); if (ui.view === 'ayarlar') render(); });
-Store.on('auth', () => { if (ui.view === 'ayarlar' || !state.onboarded) { closeModal(); render(); } });
+Store.on('auth', () => {
+  if (Store.isAdmin && !adminOff) adminOff = Store.watchAdmin(data => { adminData = data; refreshAdmin(); });
+  else if (!Store.isAdmin && adminOff) { adminOff(); adminOff = null; adminData = { profiles: {}, inbox: {}, error: null, loaded: false }; }
+  if (ui.view === 'ayarlar' || ui.view === 'kullanicilar' || !state.onboarded) { closeModal(); render(); }
+  else document.body.classList.toggle('is-admin', Store.isAdmin);
+});
+Store.on('inbox', msgs => {
+  inbox = msgs;
+  showNextMessage();
+  if (ui.view === 'ayarlar' && !document.activeElement?.closest('form')) render();
+});
 Store.on('remote', data => {
   state = migrate(data);
   applyTheme();

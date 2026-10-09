@@ -5,6 +5,26 @@
         ".read": "auth != null && auth.uid === $uid",
         ".write": "auth != null && auth.uid === $uid"
       }
+    },
+    "profiles": {
+      ".read": "auth != null && auth.token.email_verified === true && auth.token.email === 'gunduzpolat35@gmail.com'",
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "inbox": {
+      ".read": "auth != null && auth.token.email_verified === true && auth.token.email === 'gunduzpolat35@gmail.com'",
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.token.email_verified === true && auth.token.email === 'gunduzpolat35@gmail.com'",
+        "$msg": {
+          ".validate": "newData.hasChildren(['text', 'at']) && newData.child('text').isString() && newData.child('text').val().length <= 1000",
+          "readAt": {
+            ".write": "auth != null && auth.uid === $uid"
+          }
+        }
+      }
     }
   }
 }
