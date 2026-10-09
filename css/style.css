@@ -70,7 +70,8 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
   padding: calc(10px + env(safe-area-inset-top)) 16px 10px; background: color-mix(in srgb, var(--bg) 85%, transparent);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
 }
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 17px; letter-spacing: -.02em; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 17px; letter-spacing: -.02em; white-space: nowrap; }
+@media (max-width: 380px) { .brand-mobile span:last-child { display: none; } }
 .logo { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; color: #fff; background: linear-gradient(135deg, var(--accent), #a35cff); box-shadow: 0 4px 14px rgba(109, 94, 252, .35); }
 .logo .ic { width: 19px; height: 19px; }
 .top-actions { display: flex; align-items: center; gap: 6px; }
