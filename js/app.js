@@ -64,14 +64,17 @@ function defaultState() {
     v: 1,
     onboarded: false,
     settings: {
-      name: '', alan: 'say', start: today(), exam: '2027-06-19',
+      name: '', alan: 'say', start: today(), exam: '2027-06-19', mode: 'custom',
       perDay: 0, denemeDay: 0, reviewWeeks: 6, disabled: [], theme: 'auto', pomo: 25,
     },
-    plan: {},      // 'YYYY-AA-GG' -> [konuId]
+    weekly: {},    // haftanın günü (0=Pazar) -> [{ id, sub, text, from, until }]
+    wdone: {},     // `${gün}_${id}` -> tiklendiği gün
+    wskip: {},     // `${gün}_${id}` -> o gün için kaldırıldı
+    plan: {},      // 'YYYY-AA-GG' -> [konuId] (yalnızca otomatik planda)
     done: {},      // konuId -> bitirildiği gün
     reviews: {},   // `${konuId}@${gün}` -> yapıldığı gün
     special: {},   // gün -> deneme/tekrar günü tamamlandı
-    custom: {},    // gün -> [{ id, text, done }]
+    custom: {},    // gün -> [{ id, sub, text, done }]
     log: {},       // gün -> { q, min, pomo }
     notes: {},     // gün -> metin
     denemeler: [], // { id, type, date, name, s: { bölüm: { d, y } } }
@@ -105,6 +108,7 @@ function activeSubjects() {
   return SUBJECTS.filter(sub => (sub.exam === 'TYT' || ayt.includes(sub.id)) && !s.disabled.includes(sub.id));
 }
 const subjectIds = sub => sub.topics.map((_, i) => `${sub.id}:${i}`);
+const isAuto = () => state.settings.mode === 'auto';
 const planEnd = () => addDays(state.settings.exam, -state.settings.reviewWeeks * 7);
 
 // Kalan konuları, her ders aynı anda bitecek şekilde iç içe geçirip
@@ -137,38 +141,58 @@ function buildPlan(from) {
   state.plan = plan;
 }
 
+// Otomatik planın konuları ve aralıklı tekrarları yalnızca otomatik modda görünür.
 function buildCtx() {
-  const rev = {};
-  for (const [id, d] of Object.entries(state.done)) {
-    if (!topicInfo(id)) continue;
-    for (const k of REV) (rev[addDays(d, k)] ||= []).push({ id, k, key: `${id}@${k}` });
+  const rev = {}, planIdx = {};
+  if (isAuto()) {
+    for (const [id, d] of Object.entries(state.done)) {
+      if (!topicInfo(id)) continue;
+      for (const k of REV) (rev[addDays(d, k)] ||= []).push({ id, k, key: `${id}@${k}` });
+    }
+    for (const [d, ids] of Object.entries(state.plan)) ids.forEach(id => { planIdx[id] = d; });
   }
-  const planIdx = {};
-  for (const [d, ids] of Object.entries(state.plan)) ids.forEach(id => { planIdx[id] = d; });
   ctx = { rev, planIdx, end: planEnd(), active: activeSubjects() };
 }
 
+// Her hafta tekrarlanan dersler: eklendiği günden itibaren (ve kaldırılana kadar) görünür.
+function weeklyFor(d) {
+  if (d >= state.settings.exam) return [];
+  return (state.weekly[parse(d).getDay()] || [])
+    .filter(w => d >= w.from && (!w.until || d < w.until) && !state.wskip[`${d}_${w.id}`]);
+}
+
 function dayData(d) {
-  const s = state.settings;
-  const topics = (state.plan[d] || []).filter(topicInfo);
+  const s = state.settings, auto = isAuto();
+  const topics = auto ? (state.plan[d] || []).filter(topicInfo) : [];
   const custom = state.custom[d] || [];
+  const weekly = weeklyFor(d);
   const reviews = ctx.rev[d] || [];
   let special = null;
   if (d === s.exam) special = { text: 'YKS günü — başarılar!', exam: true };
-  else if (d >= s.start && d < s.exam) {
+  else if (auto && d >= s.start && d < s.exam) {
     if (d >= ctx.end) special = { text: 'Genel tekrar + deneme günü', sub: 'Bir deneme çöz, yanlışlarını konu konu incele.' };
     else if (parse(d).getDay() === s.denemeDay) special = { text: 'Deneme günü', sub: 'Bir deneme çöz, yanlışlarını incele, haftanın konularını tekrar et.' };
   }
   const hasSpecial = special && !special.exam;
-  const total = topics.length + custom.length + reviews.length + (hasSpecial ? 1 : 0);
+  const total = topics.length + weekly.length + custom.length + reviews.length + (hasSpecial ? 1 : 0);
   const done = topics.filter(id => state.done[id]).length
+    + weekly.filter(w => state.wdone[`${d}_${w.id}`]).length
     + custom.filter(c => c.done).length
     + reviews.filter(r => state.reviews[r.key]).length
     + (hasSpecial && state.special[d] ? 1 : 0);
-  return { d, topics, custom, reviews, special, total, done };
+  return { d, topics, weekly, custom, reviews, special, total, done };
+}
+
+// Takvim hücresi için kısa etiketler
+function dayChips(dd) {
+  const out = dd.topics.map(id => { const ti = topicInfo(id); return { label: ti.name, color: ti.sub.color, done: !!state.done[id] }; });
+  dd.weekly.forEach(w => out.push({ label: SUB[w.sub]?.name || w.text, color: SUB[w.sub]?.color || 'var(--muted)', done: !!state.wdone[`${dd.d}_${w.id}`] }));
+  dd.custom.forEach(c => out.push({ label: SUB[c.sub]?.name || c.text, color: SUB[c.sub]?.color || 'var(--muted)', done: !!c.done }));
+  return out;
 }
 
 function overdue() {
+  if (!isAuto()) return [];
   const t = today(), out = [];
   for (const [d, ids] of Object.entries(state.plan)) {
     if (d >= t) continue;
@@ -184,7 +208,8 @@ function activity() {
   Object.values(state.done).forEach(d => add(d, 1));
   Object.values(state.reviews).forEach(d => add(d, 0.5));
   Object.entries(state.special).forEach(([d, v]) => v && add(d, 1));
-  Object.entries(state.custom).forEach(([d, list]) => add(d, list.filter(c => c.done).length * 0.5));
+  Object.entries(state.custom).forEach(([d, list]) => add(d, list.filter(c => c.done).length));
+  Object.values(state.wdone).forEach(d => add(d, 1));
   Object.entries(state.log).forEach(([d, l]) => add(d, (l.q || 0) / 40 + (l.min || 0) / 60));
   return a;
 }
@@ -224,12 +249,35 @@ function reviewCard(r) {
   </div>`;
 }
 
+// Ders seçildiyse ders adı başlık olur, not varsa not başlığa geçer.
+function subLabel(subId, text) {
+  const sub = SUB[subId];
+  if (!sub) return { color: 'var(--muted)', tag: 'Görev', title: text };
+  return { color: sub.color, tag: text ? `${sub.exam} · ${sub.name}` : sub.exam, title: text || sub.name };
+}
+
 function customCard(c, d) {
-  return `<div class="task task-custom ${c.done ? 'is-done' : ''}">
-    <button class="check" data-act="custom" data-id="${c.id}" data-date="${d}" aria-pressed="${!!c.done}" aria-label="Görev tamamlandı">${ic('check')}</button>
-    <div class="task-main"><span class="task-tag">Kendi görevin</span><span class="task-title">${esc(c.text)}</span></div>
-    <button class="icon-btn" data-act="del-custom" data-id="${c.id}" data-date="${d}" aria-label="Görevi sil">${ic('x')}</button>
+  const l = subLabel(c.sub, c.text);
+  return `<div class="task ${c.done ? 'is-done' : ''}" style="--c:${l.color}">
+    <button class="check" data-act="custom" data-id="${c.id}" data-date="${d}" aria-pressed="${!!c.done}" aria-label="${esc(l.title)} tamamlandı">${ic('check')}</button>
+    <div class="task-main"><span class="task-tag">${esc(l.tag)}</span><span class="task-title">${esc(l.title)}</span></div>
+    <button class="icon-btn" data-act="del-custom" data-id="${c.id}" data-date="${d}" aria-label="Sil">${ic('x')}</button>
   </div>`;
+}
+
+function weeklyCard(w, d) {
+  const l = subLabel(w.sub, w.text), key = `${d}_${w.id}`, done = !!state.wdone[key];
+  return `<div class="task ${done ? 'is-done' : ''}" style="--c:${l.color}">
+    <button class="check" data-act="wtoggle" data-key="${key}" aria-pressed="${done}" aria-label="${esc(l.title)} tamamlandı">${ic('check')}</button>
+    <div class="task-main"><span class="task-tag">${esc(l.tag)} <span class="rep" title="Her hafta tekrar ediyor">${ic('repeat')}</span></span><span class="task-title">${esc(l.title)}</span></div>
+    <button class="icon-btn" data-act="wdel" data-id="${w.id}" data-date="${d}" aria-label="Sil">${ic('x')}</button>
+  </div>`;
+}
+
+function subjectOptions() {
+  const group = exam => ctx.active.filter(s => s.exam === exam)
+    .map(s => `<option value="${s.id}">${exam} ${esc(s.name)}</option>`).join('');
+  return `<option value="">Ders seç</option><optgroup label="TYT">${group('TYT')}</optgroup><optgroup label="AYT">${group('AYT')}</optgroup>`;
 }
 
 function specialCard(dd) {
@@ -246,13 +294,17 @@ function taskList(dd) {
   let h = '';
   if (dd.special) h += specialCard(dd);
   dd.topics.forEach(id => { h += topicCard(id, dd.d); });
-  dd.reviews.forEach(r => { h += reviewCard(r); });
+  dd.weekly.forEach(w => { h += weeklyCard(w, dd.d); });
   dd.custom.forEach(c => { h += customCard(c, dd.d); });
-  if (!h) h = empty('Bu gün için plan yok', 'İstersen aşağıdan kendi görevini ekle.');
+  dd.reviews.forEach(r => { h += reviewCard(r); });
+  if (!h) h = empty('Bu güne ders eklenmedi', 'Aşağıdan çalışacağın dersi seçip ekle.');
+  const gun = GUNLER[parse(dd.d).getDay()].toLocaleLowerCase('tr');
   return `<div class="tasks">${h}</div>
     <form class="add-task" data-form="custom" data-date="${dd.d}">
-      <input name="text" placeholder="Görev ekle (ör. 40 paragraf sorusu)" autocomplete="off" maxlength="120">
-      <button class="btn btn-soft" aria-label="Ekle">${ic('plus')}</button>
+      <select name="sub" aria-label="Ders">${subjectOptions()}</select>
+      <input name="text" placeholder="Not (ör. 2 saat, 40 soru, tekrar)" autocomplete="off" maxlength="120">
+      <label class="rep-toggle"><input type="checkbox" name="weekly"><span>${ic('repeat')} Her ${gun} tekrarla</span></label>
+      <button class="btn btn-primary">${ic('plus')} Ekle</button>
     </form>`;
 }
 
@@ -273,7 +325,7 @@ VIEWS.bugun = () => {
   const st = streaks(activity());
   const log = state.log[t] || {};
   const motto = MOTIVASYON[parse(t).getDate() % MOTIVASYON.length];
-  const before = t < s.start;
+  const before = isAuto() && t < s.start;
 
   return `
   <section class="hero">
@@ -294,7 +346,7 @@ VIEWS.bugun = () => {
     <div class="col">
       <section class="card">
         <div class="card-head">
-          <h2>Bugünün planı</h2>
+          <h2>${isAuto() ? 'Bugünün planı' : 'Bugünün dersleri'}</h2>
           <span class="count">${dd.done}/${dd.total}</span>
         </div>
         ${before ? `<p class="hint">Planın ${fmtLong(s.start)} günü başlıyor. O zamana kadar kendi görevlerini ekleyebilirsin.</p>` : ''}
@@ -452,17 +504,15 @@ VIEWS.takvim = () => {
     if (d === s.exam) cls.push('exam');
     if (dd.special && !dd.special.exam) cls.push('special');
     if (dd.total && dd.done === dd.total) cls.push('full');
-    else if (d < t && dd.topics.some(id => !state.done[id])) cls.push('late');
-    const chips = dd.topics.slice(0, 3).map(id => {
-      const ti = topicInfo(id);
-      return `<span class="chip-mini ${state.done[id] ? 'done' : ''}" style="--c:${ti.sub.color}">${esc(ti.name)}</span>`;
-    }).join('');
-    const dots = dd.topics.map(id => `<i style="--c:${topicInfo(id).sub.color}" class="${state.done[id] ? 'done' : ''}"></i>`).join('');
+    else if (d < t && (isAuto() ? dd.topics.some(id => !state.done[id]) : dd.done < dd.total)) cls.push('late');
+    const items = dayChips(dd);
+    const chips = items.slice(0, 3).map(c => `<span class="chip-mini ${c.done ? 'done' : ''}" style="--c:${c.color}">${esc(c.label)}</span>`).join('');
+    const dots = items.map(c => `<i style="--c:${c.color}" class="${c.done ? 'done' : ''}"></i>`).join('');
     const pct = dd.total ? dd.done / dd.total * 100 : 0;
     cells += `<button class="${cls.join(' ')}" data-act="sel-day" data-date="${d}" aria-label="${fmtLong(d)}, ${dd.done}/${dd.total} görev">
       <span class="num">${dt.getDate()}</span>
       ${d === s.exam ? '<span class="badge-exam">YKS</span>' : dd.special && !dd.special.exam ? `<span class="badge-sp">${dd.special.text.startsWith('Genel') ? 'Tekrar' : 'Deneme'}</span>` : ''}
-      <span class="chips">${chips}${dd.topics.length > 3 ? `<span class="more">+${dd.topics.length - 3}</span>` : ''}</span>
+      <span class="chips">${chips}${items.length > 3 ? `<span class="more">+${items.length - 3}</span>` : ''}</span>
       <span class="dots">${dots}</span>
       ${dd.total ? `<span class="bar"><i style="width:${pct}%"></i></span>` : ''}
     </button>`;
@@ -482,9 +532,10 @@ VIEWS.takvim = () => {
         ${cells}
       </div>
       <div class="legend">
-        <span><i class="lg-full"></i>Tamamlandı</span><span><i class="lg-late"></i>Geride kalan</span>
-        <span><i class="lg-sp"></i>Deneme / tekrar</span>
+        <span><i class="lg-full"></i>Tamamlandı</span><span><i class="lg-late"></i>Yarım kalan</span>
+        ${isAuto() ? '<span><i class="lg-sp"></i>Deneme / tekrar</span>' : `<span>${ic('repeat', 'lg-ic')} Her hafta tekrar eden</span>`}
       </div>
+      ${isAuto() ? '' : '<p class="hint">Bir güne dokun, altta açılan yerden o güne ders ekle.</p>'}
     </section>
     <section class="card day-card" id="day-detail">
       <div class="card-head">
@@ -512,7 +563,7 @@ VIEWS.konular = () => {
     </div>
     <div class="konu-sum">
       ${ring(pct, '', 'sm')}
-      <div><b>${doneN} / ${ids.length} konu</b><span class="hint">Konuya dokunarak bitirdiğini işaretle. Tarih etiketi seni takvimdeki gününe götürür.</span></div>
+      <div><b>${doneN} / ${ids.length} konu</b><span class="hint">Konuya dokunarak bitirdiğini işaretle.${isAuto() ? ' Tarih etiketi seni takvimdeki gününe götürür.' : ''}</span></div>
     </div>
     <label class="search">${ic('search')}<input type="search" data-input="konuQ" placeholder="Konu ara…" value="${esc(ui.konuQ)}"></label>
   </section>
@@ -693,10 +744,10 @@ VIEWS.istatistik = () => {
     <div class="card kpi"><span class="kpi-ic">${ic('reset')}</span><div><b>${Math.floor(totalMin / 60)} sa ${totalMin % 60} dk</b><span>odak süresi</span></div></div>
   </div>
 
-  <section class="card pace ${ahead >= 0 ? 'good' : 'bad'}">
+  ${isAuto() ? `<section class="card pace ${ahead >= 0 ? 'good' : 'bad'}">
     <b>${plannedSoFar === 0 ? 'Plan henüz başlamadı.' : ahead >= 0 ? `Plana göre ${ahead === 0 ? 'tam zamanındasın' : `${ahead} konu öndesin`}!` : `Plana göre ${-ahead} konu geridesin.`}</b>
     <span>${plannedSoFar ? `Bugüne kadar planlanan ${plannedSoFar} konunun ${plannedDone} tanesi bitti.` : ''}${ahead < 0 ? ' "Bugün" sayfasından planı yeniden dengeleyebilirsin.' : ''}</span>
-  </section>
+  </section>` : weekCard(endMon, t)}
 
   <section class="card">
     <div class="card-head"><h2>Çalışma takvimi</h2><span class="hint">son 6 ay</span></div>
@@ -721,6 +772,18 @@ VIEWS.istatistik = () => {
   </div>`;
 };
 
+// Kendi programında: bu haftanın (Pzt → bugün) eklenen derslerinin kaçı tiklendi
+function weekCard(mon, t) {
+  let total = 0, done = 0;
+  for (let d = mon; d <= t; d = addDays(d, 1)) { const dd = dayData(d); total += dd.total; done += dd.done; }
+  if (!total) return `<section class="card pace"><b>Bu hafta henüz ders eklenmedi.</b><span>Takvimde bir güne dokunup ders ekleyebilirsin.</span></section>`;
+  const pct = Math.round(done / total * 100);
+  return `<section class="card pace ${pct >= 70 ? 'good' : 'bad'}">
+    <b>Bu hafta derslerinin %${pct}'ini tamamladın${pct === 100 ? ', süper!' : '.'}</b>
+    <span>Pazartesiden bugüne eklenen ${total} dersin ${done} tanesi tiklendi.</span>
+  </section>`;
+}
+
 // ---- ayarlar
 VIEWS.ayarlar = () => {
   const s = state.settings, u = Store.user;
@@ -742,25 +805,32 @@ VIEWS.ayarlar = () => {
       </button>`}
   </section>
 
-  <form class="card form" data-form="settings">
+  <form class="card form ${isAuto() ? '' : 'is-custom'}" data-form="settings">
     <div class="card-head"><h2>Plan ayarları</h2></div>
+    <label class="field"><span>Takvim</span><select name="mode">
+      <option value="custom" ${isAuto() ? '' : 'selected'}>Kendi programım (takvime derslerimi ben eklerim)</option>
+      <option value="auto" ${isAuto() ? 'selected' : ''}>Otomatik plan (konular sınava kadar günlere dağıtılır)</option>
+    </select></label>
     <div class="row-2">
       <label class="field"><span>Adın</span><input name="name" value="${esc(s.name)}" maxlength="30" placeholder="ör. Kaida"></label>
       <label class="field"><span>Alan</span><select name="alan">${Object.entries(ALANLAR).map(([k, a]) => `<option value="${k}" ${s.alan === k ? 'selected' : ''}>${a.name}</option>`).join('')}</select></label>
-      <label class="field"><span>Plan başlangıcı</span><input type="date" name="start" value="${s.start}" required></label>
       <label class="field"><span>Sınav (TYT) tarihi</span><input type="date" name="exam" value="${s.exam}" required></label>
+      <label class="field"><span>Tema</span><select name="theme">${[['auto', 'Sistem'], ['light', 'Açık'], ['dark', 'Koyu']].map(([v, l]) => `<option value="${v}" ${s.theme === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    </div>
+    <div class="row-2 auto-only">
+      <label class="field"><span>Plan başlangıcı</span><input type="date" name="start" value="${s.start}" required></label>
       <label class="field"><span>Günlük konu sayısı</span><select name="perDay">${[0, 1, 2, 3, 4, 5, 6].map(n => `<option value="${n}" ${s.perDay === n ? 'selected' : ''}>${n ? n + ' konu' : 'Otomatik (sınava göre yay)'}</option>`).join('')}</select></label>
       <label class="field"><span>Haftalık deneme günü</span><select name="denemeDay">${[[0, 'Pazar'], [6, 'Cumartesi'], [-1, 'Yok']].map(([v, l]) => `<option value="${v}" ${s.denemeDay === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field"><span>Sondaki genel tekrar dönemi</span><select name="reviewWeeks">${[0, 2, 4, 6, 8, 10].map(n => `<option value="${n}" ${s.reviewWeeks === n ? 'selected' : ''}>${n ? n + ' hafta' : 'Yok'}</option>`).join('')}</select></label>
-      <label class="field"><span>Tema</span><select name="theme">${[['auto', 'Sistem'], ['light', 'Açık'], ['dark', 'Koyu']].map(([v, l]) => `<option value="${v}" ${s.theme === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     </div>
     <fieldset class="field">
-      <span>Plana dahil dersler</span>
+      <span>Derslerim</span>
       <div class="subj-toggles">
         ${pool.map(sub => `<label class="toggle" style="--c:${sub.color}"><input type="checkbox" name="sub" value="${sub.id}" ${s.disabled.includes(sub.id) ? '' : 'checked'}><span>${sub.exam} ${esc(sub.name)}</span></label>`).join('')}
       </div>
     </fieldset>
-    <p class="hint">Plan ayarlarını değiştirince tamamlanmamış konular bugünden itibaren yeniden dağıtılır. Bitirdiğin konular korunur.</p>
+    <p class="hint auto-only">Plan ayarlarını değiştirince tamamlanmamış konular bugünden itibaren yeniden dağıtılır. Bitirdiğin konular korunur.</p>
+    <p class="hint custom-only">Takvim boş kalır; her güne çalışacağın dersi kendin eklersin. Konular sayfası ve bitirdiğin konular aynen durur.</p>
     <button class="btn btn-primary">Kaydet</button>
   </form>
 
@@ -818,24 +888,30 @@ function openOnboarding() {
   if (document.querySelector('[data-form="onboard"]')) return;
   const s = state.settings;
   openModal(`
-    <form data-form="onboard" class="form onboard">
+    <form data-form="onboard" class="form onboard ${s.mode === 'auto' ? '' : 'is-custom'}">
       <div class="ob-hero">
         <span class="logo-big">${ic('cal')}</span>
         <h2>YKS Planım'a hoş geldin</h2>
-        <p class="hint">Bütün TYT ve AYT konularını sınava kadar günlere dağıtalım. Her gün yaptığını tikle, gerisini biz takip edelim.</p>
+        <p class="hint">Her gün çalışacağın dersleri takvime ekle, yaptıkça tikle. Konu takibini, serini ve netlerini biz tutalım.</p>
       </div>
       <label class="field"><span>Adın</span><input name="name" maxlength="30" placeholder="ör. Kaida" value="${esc(s.name)}"></label>
+      <div class="field"><span>Takvimin nasıl olsun?</span>
+        <div class="alan-cards mode-cards">
+          <label class="alan-card"><input type="radio" name="mode" value="custom" ${s.mode === 'auto' ? '' : 'checked'}><span><b>Kendi programım</b><small>Takvim boş başlar, her güne dersimi ben eklerim.</small></span></label>
+          <label class="alan-card"><input type="radio" name="mode" value="auto" ${s.mode === 'auto' ? 'checked' : ''}><span><b>Otomatik plan</b><small>Bütün konular sınava kadar günlere dağıtılsın.</small></span></label>
+        </div>
+      </div>
       <div class="field"><span>Alanın</span>
         <div class="alan-cards">
           ${Object.entries(ALANLAR).map(([k, a]) => `<label class="alan-card"><input type="radio" name="alan" value="${k}" ${s.alan === k ? 'checked' : ''}><span><b>${a.name}</b><small>TYT + ${a.ayt.map(id => SUB[id].name).join(', ')}</small></span></label>`).join('')}
         </div>
       </div>
       <div class="row-2">
-        <label class="field"><span>Başlangıç</span><input type="date" name="start" value="${s.start}" required></label>
+        <label class="field auto-only"><span>Başlangıç</span><input type="date" name="start" value="${s.start}" required></label>
         <label class="field"><span>Sınav tarihi</span><input type="date" name="exam" value="${s.exam}" required></label>
       </div>
       <p class="hint">YKS 2027 tarihi ÖSYM tarafından açıklanınca Ayarlar'dan güncelleyebilirsin.</p>
-      <button class="btn btn-primary btn-block">Planımı oluştur</button>
+      <button class="btn btn-primary btn-block">Başlayalım</button>
       ${Store.ready && !Store.user ? `<button type="button" class="btn btn-ghost btn-block" data-act="signin">Zaten planım var — Google ile giriş yap</button>` : ''}
     </form>`, { locked: true });
 }
@@ -903,6 +979,41 @@ const ACTIONS = {
     state.custom[d] = (state.custom[d] || []).filter(x => x.id !== el.dataset.id);
     if (!state.custom[d].length) delete state.custom[d];
     commit();
+  },
+  wtoggle: el => {
+    const before = dayData(today()), k = el.dataset.key;
+    if (state.wdone[k]) delete state.wdone[k]; else state.wdone[k] = today();
+    afterToggle(before);
+  },
+  // Her hafta tekrar eden ders: sadece o günden mi, bundan sonraki tüm haftalardan mı?
+  wdel: el => {
+    const { id, date } = el.dataset;
+    const w = Object.values(state.weekly).flat().find(x => x.id === id);
+    if (!w) return;
+    const l = subLabel(w.sub, w.text), gun = GUNLER[parse(date).getDay()].toLocaleLowerCase('tr');
+    openModal(`
+      <div class="form">
+        <div class="modal-head"><h2>Dersi kaldır</h2><button type="button" class="icon-btn" data-act="close" aria-label="Kapat">${ic('x')}</button></div>
+        <p><b>${esc(l.title)}</b> her ${gun} tekrar ediyor.</p>
+        <button class="btn btn-soft btn-block" data-act="wdel-one" data-id="${id}" data-date="${date}">Sadece ${fmt(date)} gününden kaldır</button>
+        <button class="btn btn-danger btn-block" data-act="wdel-all" data-id="${id}" data-date="${date}">${fmt(date)} ve sonraki tüm haftalardan kaldır</button>
+      </div>`);
+  },
+  'wdel-one': el => {
+    state.wskip[`${el.dataset.date}_${el.dataset.id}`] = true;
+    closeModal();
+    commit();
+  },
+  'wdel-all': el => {
+    const { id, date } = el.dataset;
+    for (const [dow, list] of Object.entries(state.weekly)) {
+      // Geçmiş haftalar (tiklenenler dahil) korunur; ders bu günden itibaren görünmez.
+      state.weekly[dow] = list.flatMap(w => w.id !== id ? [w] : w.from >= date ? [] : [{ ...w, until: date }]);
+      if (!state.weekly[dow].length) delete state.weekly[dow];
+    }
+    closeModal();
+    commit();
+    toast('Ders programdan kaldırıldı');
   },
   postpone: el => {
     let to = addDays(el.dataset.date, 1);
@@ -1007,11 +1118,17 @@ document.addEventListener('submit', e => {
 
 const FORMS = {
   custom: (fd, f) => {
-    const text = String(fd.get('text') || '').trim();
-    if (!text) return;
-    (state.custom[f.dataset.date] ||= []).push({ id: uid(), text, done: false });
+    const d = f.dataset.date;
+    const text = String(fd.get('text') || '').trim(), sub = SUB[fd.get('sub')] ? fd.get('sub') : '';
+    if (!text && !sub) { toast('Bir ders seç ya da not yaz'); return; }
+    if (fd.get('weekly')) {
+      const dow = parse(d).getDay();
+      (state.weekly[dow] ||= []).push({ id: uid(), sub, text, from: d });
+      toast(`Her ${GUNLER[dow].toLocaleLowerCase('tr')} takvimine eklendi`);
+    } else {
+      (state.custom[d] ||= []).push({ id: uid(), sub, text, done: false });
+    }
     commit();
-    document.querySelector(`[data-form="custom"][data-date="${f.dataset.date}"] input`)?.focus();
   },
   deneme: fd => {
     const type = ui.denemeTab, s = {};
@@ -1031,12 +1148,14 @@ const FORMS = {
     s.alan = fd.get('alan') || 'say';
     s.start = fd.get('start') || today();
     s.exam = fd.get('exam') || s.exam;
-    if (s.exam <= s.start) { toast('Sınav tarihi başlangıçtan sonra olmalı'); return; }
+    s.mode = fd.get('mode') === 'auto' ? 'auto' : 'custom';
+    if (s.mode === 'custom') s.start = today();
+    if (s.exam <= s.start) { toast('Sınav tarihi bugünden sonra olmalı'); return; }
     state.onboarded = true;
-    buildPlan(s.start);
+    if (s.mode === 'auto') buildPlan(s.start);
     closeModal();
     commit();
-    toast('Planın hazır! İlk konuların "Bugün" sayfasında.');
+    toast(s.mode === 'auto' ? 'Planın hazır! İlk konuların "Bugün" sayfasında.' : 'Hazırsın! Bugünün dersini aşağıdan ekleyebilirsin.');
   },
   settings: fd => {
     const s = state.settings;
@@ -1044,6 +1163,7 @@ const FORMS = {
     const on = fd.getAll('sub');
     const next = {
       ...s,
+      mode: fd.get('mode') === 'auto' ? 'auto' : 'custom',
       name: String(fd.get('name') || '').trim(),
       alan: fd.get('alan'),
       start: fd.get('start'),
@@ -1056,8 +1176,9 @@ const FORMS = {
       disabled: fd.get('alan') === s.alan ? pool.filter(id => !on.includes(id)) : s.disabled.filter(id => id.startsWith('tyt-') && !on.includes(id)),
     };
     if (next.exam <= next.start) { toast('Sınav tarihi başlangıçtan sonra olmalı'); return; }
-    const keys = ['alan', 'start', 'exam', 'perDay', 'denemeDay', 'reviewWeeks'];
-    const replan = keys.some(k => next[k] !== s[k]) || next.disabled.join() !== s.disabled.join();
+    // Otomatik plan yalnızca otomatik modda (ve plana dair bir şey değiştiyse) yeniden kurulur.
+    const keys = ['mode', 'alan', 'start', 'exam', 'perDay', 'denemeDay', 'reviewWeeks'];
+    const replan = next.mode === 'auto' && (keys.some(k => next[k] !== s[k]) || next.disabled.join() !== s.disabled.join());
     state.settings = next;
     applyTheme();
     if (replan) buildPlan(rebalanceFrom());
@@ -1091,7 +1212,9 @@ document.addEventListener('input', e => {
 });
 
 document.addEventListener('change', e => {
-  if (e.target.dataset.file === 'import') {
+  if (e.target.name === 'mode') {
+    e.target.closest('form')?.classList.toggle('is-custom', e.target.value !== 'auto');
+  } else if (e.target.dataset.file === 'import') {
     const file = e.target.files[0];
     if (!file) return;
     file.text().then(txt => {
